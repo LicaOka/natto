@@ -480,6 +480,109 @@ module Natto
       end
     end
 
+    def parse_thread(text, local_tagger, local_lattice, constraints={})
+      if text.nil?
+        raise ArgumentError.new 'Text to parse cannot be nil'
+      elsif constraints[:boundary_constraints]
+        if !(constraints[:boundary_constraints].is_a?(Regexp) ||
+            constraints[:boundary_constraints].is_a?(String))
+          raise ArgumentError.new 'boundary constraints must be a Regexp or String'
+        end
+      elsif constraints[:feature_constraints] && !constraints[:feature_constraints].is_a?(Hash)
+        raise ArgumentError.new 'feature constraints must be a Hash'
+      elsif @options[:partial] && !text.end_with?("\n")
+        raise ArgumentError.new 'partial parsing requires new-line char at end of text'
+      end
+
+      if block_given?
+        parse_with_block(local_tagger, local_lattice, text, constraints).each {|n| yield n }
+      else
+        raise 'not support'
+      end
+    end
+
+    def parse_with_block(local_tagger, local_lattice, text, constraints)
+      self.mecab_lattice_add_request_type(local_lattice, MECAB_LATTICE_NBEST)
+      Enumerator.new do |y|
+        begin
+          if @options[:nbest] && @options[:nbest] > 1
+            n = @options[:nbest]
+          else
+            n = 1
+          end
+
+          if constraints[:boundary_constraints]
+            tokens = tokenize_by_pattern(text,
+                                         constraints[:boundary_constraints])
+            text = tokens.map {|t| t.first}.join
+            self.mecab_lattice_set_sentence(local_lattice, text)
+
+            bpos = 0
+            tokens.each do |token|
+              c = token.first.bytes.count
+
+              self.mecab_lattice_set_boundary_constraint(local_lattice,
+                                                         bpos,
+                                                         MECAB_TOKEN_BOUNDARY)
+              bpos += 1
+
+              mark = token.last ? MECAB_INSIDE_TOKEN : MECAB_ANY_BOUNDARY
+              (c-1).times do
+                self.mecab_lattice_set_boundary_constraint(local_lattice, bpos, mark)
+                bpos += 1
+              end
+            end
+          elsif constraints[:feature_constraints]
+            features = constraints[:feature_constraints]
+            tokens = tokenize_by_features(text,
+                                          features.keys)
+            text = tokens.map {|t| t.first}.join
+            self.mecab_lattice_set_sentence(local_lattice, text)
+
+            bpos = 0
+            tokens.each do |token|
+              chunk = token.first
+              c = chunk.bytes.count
+              if token.last
+                self.mecab_lattice_set_feature_constraint(local_lattice,
+                                                          bpos,
+                                                          bpos+c,
+                                                          features[chunk])
+              end
+              bpos += c
+            end
+          else
+            self.mecab_lattice_set_sentence(local_lattice, text)
+          end
+
+          self.mecab_parse_lattice(local_tagger, local_lattice)
+
+          n.times do
+            check = self.mecab_lattice_next(local_lattice)
+            if check
+              nptr = self.mecab_lattice_get_bos_node(local_lattice)
+
+              while nptr && nptr.address!=0x0
+                mn = Natto::MeCabNode.new(nptr)
+                if !mn.is_bos?
+                  surf = mn[:surface].bytes.to_a.slice(0,mn.length).pack('C*')
+                  mn.surface = surf.force_encoding(Encoding.default_external)
+                  if @options[:output_format_type] || @options[:node_format]
+                    mn.feature = self.mecab_format_node(local_tagger, nptr).force_encoding(Encoding.default_external)
+                  end
+                  y.yield mn
+                end
+                nptr = mn[:next]
+              end
+            end
+          end
+          nil
+        rescue
+          raise(MeCabError.new(self.mecab_lattice_strerror(local_lattice)))
+        end
+      end
+    end
+
     # Parses the given string `text`, returning an
     # [Enumerator](http://www.ruby-doc.org/core-2.2.1/Enumerator.html) that may be
     # used to iterate over the resulting {MeCabNode} objects. This is more 
