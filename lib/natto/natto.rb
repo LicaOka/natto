@@ -17,8 +17,8 @@ module Natto
   #
   #     nm = Natto::MeCab.new
   #     => #<Natto::MeCab:0x0000080318d278                                  \
-  #          @model=#<FFI::Pointer address=0x000008039174c0>,               \
-  #          @tagger=#<FFI::Pointer address=0x0000080329ba60>,              \
+  #          @@model=#<FFI::Pointer address=0x000008039174c0>,               \
+  #          @@tagger=#<FFI::Pointer address=0x0000080329ba60>,              \
   #          @lattice=#<FFI::Pointer address=0x000008045bd140>,             \
   #          @libpath="/usr/local/lib/libmecab.so"                          \
   #          @options={},                                                   \
@@ -151,9 +151,11 @@ module Natto
     MECAB_INSIDE_TOKEN = 2
 
     # @return [FFI:Pointer] pointer to MeCab Model.
-    attr_reader :model
+    #attr_reader :model
+    @@model = nil
     # @return [FFI:Pointer] pointer to MeCab Tagger.
-    attr_reader :tagger
+    #attr_reader :tagger
+    @@tagger = nil
     # @return [FFI:Pointer] pointer to MeCab Lattice.
     attr_reader :lattice
     # @return [String] absolute filepath to MeCab library.
@@ -197,8 +199,8 @@ module Natto
     #
     #     nm = Natto::MeCab.new(node_format: '%m¥t%f[7]¥n')
     #     => #<Natto::MeCab:0x00000803503ee8                                 \
-    #          @model=#<FFI::Pointer address=0x00000802b6d9c0>,              \
-    #          @tagger=#<FFI::Pointer address=0x00000802ad3ec0>,             \
+    #          @@model=#<FFI::Pointer address=0x00000802b6d9c0>,              \
+    #          @@tagger=#<FFI::Pointer address=0x00000802ad3ec0>,             \
     #          @lattice=#<FFI::Pointer address=0x000008035f3980>,            \
     #          @libpath="/usr/local/lib/libmecab.so",                        \
     #          @options={:node_format=>"%m¥t%f[7]¥n"},                       \
@@ -229,17 +231,17 @@ module Natto
       @options = self.class.parse_mecab_options(options) 
       opt_str  = self.class.build_options_str(@options)
 
-      @model   = self.class.mecab_model_new2(opt_str)
-      if @model.address == 0x0
+      @@model   = self.class.mecab_model_new2(opt_str)
+      if @@model.address == 0x0
         raise MeCabError.new("Could not initialize Model with options: '#{opt_str}'")
       end
 
-      @tagger  = self.class.mecab_model_new_tagger(@model)
-      if @tagger.address == 0x0
+      @@tagger  = self.class.mecab_model_new_tagger(@@model)
+      if @@tagger.address == 0x0
         raise MeCabError.new("Could not initialize Tagger with options: '#{opt_str}'")
       end
 
-      @lattice = self.class.mecab_model_new_lattice(@model)
+      @lattice = self.class.mecab_model_new_lattice(@@model)
       if @lattice.address == 0x0
         raise MeCabError.new("Could not initialize Lattice with options: '#{opt_str}'")
       end
@@ -327,7 +329,7 @@ module Natto
             self.mecab_lattice_set_sentence(@lattice, text)
           end
 
-          self.mecab_parse_lattice(@tagger, @lattice)
+          self.mecab_parse_lattice(@@tagger, @lattice)
           
           if n > 1
             retval = self.mecab_lattice_nbest_tostr(@lattice, n)
@@ -394,7 +396,7 @@ module Natto
               self.mecab_lattice_set_sentence(@lattice, text)
             end
 
-            self.mecab_parse_lattice(@tagger, @lattice)
+            self.mecab_parse_lattice(@@tagger, @lattice)
 
             n.times do
               check = self.mecab_lattice_next(@lattice)
@@ -407,7 +409,7 @@ module Natto
                     surf = mn[:surface].bytes.to_a.slice(0,mn.length).pack('C*')
                     mn.surface = surf.force_encoding(Encoding.default_external)
                     if @options[:output_format_type] || @options[:node_format]
-                      mn.feature = self.mecab_format_node(@tagger, nptr).force_encoding(Encoding.default_external)
+                      mn.feature = self.mecab_format_node(@@tagger, nptr).force_encoding(Encoding.default_external)
                     end
                     y.yield mn
                   end
@@ -423,18 +425,34 @@ module Natto
       }
 
       @dicts = []
-      @dicts << Natto::DictionaryInfo.new(self.mecab_model_dictionary_info(@model))
+      @dicts << Natto::DictionaryInfo.new(self.mecab_model_dictionary_info(@@model))
       while @dicts.last.next.address != 0x0
         @dicts << Natto::DictionaryInfo.new(@dicts.last.next)
       end
 
       @version = self.mecab_version
 
-      ObjectSpace.define_finalizer(self, self.class.create_free_proc(@model,
-                                                                     @tagger,
+      ObjectSpace.define_finalizer(self, self.class.create_free_proc(@@model,
+                                                                     @@tagger,
                                                                      @lattice))
     end
-    
+
+    def model
+      @@model
+    end
+
+    def model=(val)
+      @@model = val
+    end
+
+    def tagger
+      @@tagger
+    end
+
+    def tagger=(val)
+      @@tagger = val
+    end
+
     # Parses the given `text`, returning the MeCab output as a single string. 
     # If a block is passed to this method, then node parsing will be used
     # and each node yielded to the given block.
@@ -480,7 +498,34 @@ module Natto
       end
     end
 
+    def parse_thread_with_class_tagger(text, constraints={})
+
+      p "tagger: #{@@tagger.object_id}"
+
+      if text.nil?
+        raise ArgumentError.new 'Text to parse cannot be nil'
+      elsif constraints[:boundary_constraints]
+        if !(constraints[:boundary_constraints].is_a?(Regexp) ||
+            constraints[:boundary_constraints].is_a?(String))
+          raise ArgumentError.new 'boundary constraints must be a Regexp or String'
+        end
+      elsif constraints[:feature_constraints] && !constraints[:feature_constraints].is_a?(Hash)
+        raise ArgumentError.new 'feature constraints must be a Hash'
+      elsif @options[:partial] && !text.end_with?("\n")
+        raise ArgumentError.new 'partial parsing requires new-line char at end of text'
+      end
+
+      if block_given?
+        parse_with_block(@@tagger, @lattice, text, constraints).each {|n| yield n }
+      else
+        raise 'not support'
+      end
+    end
+
     def parse_thread(text, local_tagger, local_lattice, constraints={})
+
+      p "local_tagger: #{local_tagger.object_id}"
+
       if text.nil?
         raise ArgumentError.new 'Text to parse cannot be nil'
       elsif constraints[:boundary_constraints]
@@ -647,8 +692,8 @@ module Natto
     #   list of dictionaries and MeCab version
     def to_s
       [ super.chop,
-        "@model=#{@model},", 
-        "@tagger=#{@tagger},", 
+        "@@model=#{@@model},",
+        "@@tagger=#{@@tagger},",
         "@lattice=#{@lattice},", 
         "@libpath=\"#{@libpath}\",",
         "@options=#{@options.inspect},", 

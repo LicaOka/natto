@@ -2,11 +2,13 @@
 $: << "lib" 
 require "benchmark"
 
-require "natto"
 require "MeCab"
+require "../lib/natto/natto"
+
+require "memprof2"
 
 @mecab_tagger = MeCab::Tagger.new
-@natto_mecab = Natto::MeCab.new
+@natto_mecab = Natto::MeCab.new("-N 3 -d /usr/local/lib/mecab/dic/mecab-ipadic-neologd")
 
 def run(n)
   GC.disable
@@ -16,9 +18,21 @@ def run(n)
   GC.enable
 end
 
+def run_memprof(n)
+  GC.disable
+  Memprof2.start
+  n.times do
+    yield
+  end
+  Memprof2.report
+  Memprof2.stop
+  GC.enable
+end
+
 def benchmark(text)
-  n = 10
-  puts("text: #{text}")
+  n = 10000
+  puts("\ntext: #{text}")
+
   Benchmark.bmbm(10) do |job|
     job.report("MeCab") do
       run(n) do
@@ -26,13 +40,65 @@ def benchmark(text)
       end
     end
 
-    job.report("natto") do
+    job.report("natto.parse") do
       run(n) do
         @natto_mecab.parse(text)
       end
     end
+
+    job.report("parse by threading") do
+      #local_tagger  = Natto::MeCab.mecab_model_new_tagger(@natto_mecab.model)
+      loop_count = (n/4).to_int
+      run(loop_count) do
+        threads = 4.times.collect do
+          Thread.new do
+            @natto_mecab.parse(text.dup) do |nmt|
+              #puts nmt
+            end
+          end
+        end
+        threads.each(&:join)
+      end
+    end
   end
   puts
+
+  puts "----- memprof2 -----"
+  Memprof2.start
+  @mecab_tagger2 = MeCab::Tagger.new
+  Memprof2.report
+  Memprof2.stop
+  puts
+  Memprof2.start
+  @natto_mecab2 = Natto::MeCab.new("-N 3 -d /usr/local/lib/mecab/dic/mecab-ipadic-neologd")
+  Memprof2.report
+  Memprof2.stop
+
+  Memprof2.start
+  @natto_tagger2  = Natto::MeCab.mecab_model_new_tagger(@natto_mecab2.model)
+  Memprof2.report
+  Memprof2.stop
+
+  puts "--- mecab ---"
+  run_memprof(n) do
+    @mecab_tagger2.parse(text)
+  end
+
+  puts "--- natto.parse ---"
+  run_memprof(n) do
+    @natto_mecab2.parse(text)
+  end
+
+  puts "--- parse by threading ---"
+  loop_count = (n/4).to_int
+  run_memprof(loop_count) do
+    threads = 4.times.collect do
+      Thread.new do
+        @natto_mecab2.parse(text.dup)
+        end
+      end
+    threads.each(&:join)
+  end
 end
 
 benchmark("私の名前は中野です。")
