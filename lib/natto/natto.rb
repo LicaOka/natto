@@ -228,15 +228,15 @@ module Natto
     # @param options [Hash, String] the MeCab options
     # @raise [MeCabError] if MeCab cannot be initialized with the given `options`
     def initialize(options={})
-      @options = self.class.parse_mecab_options(options) 
-      opt_str  = self.class.build_options_str(@options)
+      @options ||= self.class.parse_mecab_options(options)
+      opt_str = self.class.build_options_str(@options)
 
-      @@model   = self.class.mecab_model_new2(opt_str)
+      @@model ||= self.class.mecab_model_new2(opt_str)
       if @@model.address == 0x0
         raise MeCabError.new("Could not initialize Model with options: '#{opt_str}'")
       end
 
-      @@tagger  = self.class.mecab_model_new_tagger(@@model)
+      @@tagger ||= self.class.mecab_model_new_tagger(@@model)
       if @@tagger.address == 0x0
         raise MeCabError.new("Could not initialize Tagger with options: '#{opt_str}'")
       end
