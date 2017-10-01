@@ -228,15 +228,23 @@ module Natto
     # @param options [Hash, String] the MeCab options
     # @raise [MeCabError] if MeCab cannot be initialized with the given `options`
     def initialize(options={})
-      @options ||= self.class.parse_mecab_options(options)
-      opt_str = self.class.build_options_str(@options)
+      @@options ||= self.class.parse_mecab_options(options)
+      opt_str = self.class.build_options_str(@@options)
 
-      @@model ||= self.class.mecab_model_new2(opt_str)
+      if @@model == nil
+        @@model = self.class.mecab_model_new2(opt_str)
+      else
+        @@model ||= self.class.mecab_model_new2(opt_str)
+      end
       if @@model.address == 0x0
         raise MeCabError.new("Could not initialize Model with options: '#{opt_str}'")
       end
 
-      @@tagger ||= self.class.mecab_model_new_tagger(@@model)
+      if @@tagger == nil
+        @@tagger = self.class.mecab_model_new_tagger(@@model)
+      else
+        @@tagger ||= self.class.mecab_model_new_tagger(@@model)
+      end
       if @@tagger.address == 0x0
         raise MeCabError.new("Could not initialize Tagger with options: '#{opt_str}'")
       end
@@ -248,37 +256,37 @@ module Natto
 
       @libpath = self.class.find_library
 
-      if @options[:nbest] && @options[:nbest] > 1
+      if @@options[:nbest] && @@options[:nbest] > 1
         self.mecab_lattice_set_request_type(@lattice, MECAB_LATTICE_NBEST)
       else
         self.mecab_lattice_set_request_type(@lattice, MECAB_LATTICE_ONE_BEST)
       end
-      if @options[:partial]
+      if @@options[:partial]
         self.mecab_lattice_add_request_type(@lattice, MECAB_LATTICE_PARTIAL)
       end
-      if @options[:marginal]
+      if @@options[:marginal]
         self.mecab_lattice_add_request_type(@lattice,
                                             MECAB_LATTICE_MARGINAL_PROB)
       end
-      if @options[:all_morphs]
+      if @@options[:all_morphs]
         # required when node parsing
         #self.mecab_lattice_add_request_type(@lattice, MECAB_LATTICE_NBEST)
         self.mecab_lattice_add_request_type(@lattice,
                                             MECAB_LATTICE_ALL_MORPHS)
       end
-      if @options[:allocate_sentence]
+      if @@options[:allocate_sentence]
         self.mecab_lattice_add_request_type(@lattice, 
                                             MECAB_LATTICE_ALLOCATE_SENTENCE)
       end
 
-      if @options[:theta]
+      if @@options[:theta]
         self.mecab_lattice_set_theta(@lattice, @options[:theta]) 
       end
 
       @parse_tostr = ->(text, constraints) {
         begin
-          if @options[:nbest] && @options[:nbest] > 1
-            n = @options[:nbest]
+          if @@options[:nbest] && @@options[:nbest] > 1
+            n = @@options[:nbest]
           else
             n = 1
           end
